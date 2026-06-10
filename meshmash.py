@@ -8,6 +8,9 @@ f= open('entry_terms.txt','w+')
 
 # Enter URL from MeSH page 
 url = '[ENTER URL FOR MESH TERM HERE]'
+wrapCharacter = '"'
+#for single quotes, use:
+#wrapCharacter = "'"
 
 # Remove ezproxy from URL if necessary
 ezproxy = 'https://www-ncbi-nlm-nih-gov.ezproxy.bu.edu/'
@@ -30,6 +33,7 @@ print('\n')
 
 # Find and print Entry Terms
 entry_terms = root.xpath('//li/text()')
+entry_terms = [x for x in entry_terms if x.strip()]
 
 print('Entry terms:')
 for entry_term in entry_terms:
@@ -53,8 +57,9 @@ f.write('"' + clean_mesh + '"[Mesh]')
 # Write Entry Terms to text file, separated by OR
 for entry_term in entry_terms:
     clean_entry_term = entry_term.replace("'", "")
-    print(' OR ' + clean_entry_term)
-    f.write(' OR ' + clean_entry_term)
+    wrapped_entry_term = wrapCharacter+clean_entry_term+wrapCharacter
+    print(' OR ' + wrapped_entry_term)
+    f.write(' OR ' + wrapped_entry_term)
     
 # Close text file
 f.close()    
