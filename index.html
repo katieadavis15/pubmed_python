@@ -115,89 +115,11 @@
         document.getElementById('pasteBtn').addEventListener('click', parseFromPasteInput);
         document.getElementById('copyBtn').addEventListener('click', copyTextToClipboard);
 
-        function extractEntryTermsOnly(htmlSource, wrapCharacter) {
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(htmlSource, 'text/html');
-            
-            // 1. Target the exact MeSH Title Heading, bypassing global layout headers
-            let meshHeading = "";
-            const h1Title = doc.querySelector('h1.title');
-            
-            if (h1Title) {
-                meshHeading = h1Title.textContent;
-            } else {
-                // Fallback loop checking all h1 elements for the true conceptual title block
-                const h1s = doc.querySelectorAll('h1');
-                for (const h1 of h1s) {
-                    let textCheck = h1.textContent.trim().toLowerCase();
-                    if (textCheck !== 'mesh' && textCheck !== '') {
-                        meshHeading = h1.textContent;
-                        break;
-                    }
-                }
-            }
-            
-            // Clean up formatting spaces and single quotes from the primary term heading
-            const cleanMeshHeading = meshHeading.replace(/\s+/g, ' ').replaceAll("'", "").trim();
-
-            // 2. Locate the precise target <ul> list linked to the Entry Terms layout block
-            let targetUl = null;
-            const elements = doc.getElementsByTagName('*');
-            for (let i = 0; i < elements.length; i++) {
-                const el = elements[i];
-                if (el.textContent.trim().startsWith('Entry Terms:')) {
-                    let sibling = el.nextElementSibling;
-                    while (sibling) {
-                        if (sibling.tagName === 'UL') {
-                            targetUl = sibling;
-                            break;
-                        }
-                        if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4'].includes(sibling.tagName)) {
-                            break; 
-                        }
-                        sibling = sibling.nextElementSibling;
-                    }
-                    if (targetUl) break;
-                }
-            }
-            
-            // Fallback list scan check for manual partial snippet pastes
-            if (!targetUl) {
-                const uls = doc.querySelectorAll('ul');
-                for (const ul of uls) {
-                    let prev = ul.previousElementSibling;
-                    if (prev && prev.textContent.includes('Entry Terms')) {
-                        targetUl = ul;
-                        break;
-                    }
-                }
-            }
-            
-            if (!targetUl) {
-                targetUl = doc.querySelector('ul');
-            }
-            
-            if (!targetUl) {
-                return "Error: Could not locate the structural Entry Terms <ul> element list.";
-            }
-            
-            // 3. Process the isolated Entry Terms list elements
-            const liElements = targetUl.querySelectorAll('li');
-            let structuralTermsList = [];
-            
-            liElements.forEach(li => {
-                let rawString = li.textContent;
-                let cleanString = rawString.replace(/\s+/g, ' ').trim().replaceAll("'", "");
-                if (cleanString) {
-                    structuralTermsList.push(cleanString);
-                }
-            });
-            
-            if (structuralTermsList.length === 0) {
-                return "Error: The target Entry Terms list container was found, but extracted zero valid items.";
+        function compileQuery(cleanMeshHeading, structuralTermsList, wrapCharacter) {
+            if (!structuralTermsList || structuralTermsList.length === 0) {
+                return "Error: No entry terms were found to build a query.";
             }
 
-            // 4. Construct output matching your file generation criteria exactly
             let compiledQueryString = "";
             if (cleanMeshHeading) {
                 compiledQueryString = '"' + cleanMeshHeading + '"[Mesh]';
@@ -205,14 +127,139 @@
                     compiledQueryString += ' OR ' + wrapCharacter + term + wrapCharacter;
                 });
             } else {
-                // Handle snippet execution cleanly if heading wasn't supplied in context window
                 compiledQueryString = structuralTermsList.map(term => wrapCharacter + term + wrapCharacter).join(' OR ');
             }
-            
+
             return compiledQueryString;
         }
 
-        // Network data pipeline setup
+        function extractEntryTermsOnly(sourceText, wrapCharacter) {
+            const rawText = (sourceText || '').trim();
+            if (!rawText) {
+                return "Error: No content was returned from the remote page.";
+            }
+
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(rawText, 'text/html');
+            const hasMarkup = rawText.includes('<') && rawText.includes('>');
+
+            if (hasMarkup) {
+                let meshHeading = "";
+                const h1Title = doc.querySelector('h1.title');
+                
+                if (h1Title) {
+                    meshHeading = h1Title.textContent;
+                } else {
+                    const h1s = doc.querySelectorAll('h1');
+                    for (const h1 of h1s) {
+                        let textCheck = h1.textContent.trim().toLowerCase();
+                        if (textCheck !== 'mesh' && textCheck !== '') {
+                            meshHeading = h1.textContent;
+                            break;
+                        }
+                    }
+                }
+                
+                const cleanMeshHeading = meshHeading.replace(/\s+/g, ' ').replaceAll("'", "").trim();
+
+                let targetUl = null;
+                const elements = doc.getElementsByTagName('*');
+                for (let i = 0; i < elements.length; i++) {
+                    const el = elements[i];
+                    if (el.textContent.trim().startsWith('Entry Terms:')) {
+                        let sibling = el.nextElementSibling;
+                        while (sibling) {
+                            if (sibling.tagName === 'UL') {
+                                targetUl = sibling;
+                                break;
+                            }
+                            if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4'].includes(sibling.tagName)) {
+                                break; 
+                            }
+                            sibling = sibling.nextElementSibling;
+                        }
+                        if (targetUl) break;
+                    }
+                }
+                
+                if (!targetUl) {
+                    const uls = doc.querySelectorAll('ul');
+                    for (const ul of uls) {
+                        let prev = ul.previousElementSibling;
+                        if (prev && prev.textContent.includes('Entry Terms')) {
+                            targetUl = ul;
+                            break;
+                        }
+                    }
+                }
+                
+                if (!targetUl) {
+                    targetUl = doc.querySelector('ul');
+                }
+                
+                if (targetUl) {
+                    const liElements = targetUl.querySelectorAll('li');
+                    let structuralTermsList = [];
+                    
+                    liElements.forEach(li => {
+                        let rawString = li.textContent;
+                        let cleanString = rawString.replace(/\s+/g, ' ').trim().replaceAll("'", "");
+                        if (cleanString) {
+                            structuralTermsList.push(cleanString);
+                        }
+                    });
+                    
+                    if (structuralTermsList.length > 0) {
+                        return compileQuery(cleanMeshHeading, structuralTermsList, wrapCharacter);
+                    }
+                }
+            }
+
+            return parseFromPlainText(rawText, wrapCharacter);
+        }
+
+        function parseFromPlainText(text, wrapCharacter) {
+            const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+            if (lines.length === 0) {
+                return "Error: The pasted content did not contain any usable text.";
+            }
+
+            let meshHeading = "";
+            const skipList = ["mesh", "ncbi", "national", "library", "medicine", "help", "log in", "official website", "subheadings:", "pubmed"];
+            for (const line of lines) {
+                const lower = line.toLowerCase();
+                if (!skipList.some(skip => lower.includes(skip)) && line.length > 3) {
+                    meshHeading = line.replace(/['"]/g, "");
+                    break;
+                }
+            }
+
+            const entryTermsIndex = lines.findIndex(line => line.toLowerCase().startsWith('entry terms'));
+            if (entryTermsIndex === -1) {
+                return "Error: Could not find an 'Entry Terms' section in the provided text.";
+            }
+
+            let structuralTermsList = [];
+            const stopWords = ["all mesh categories", "previous indexing:", "see also:", "supplemental content.", "tree number"];
+            for (let i = entryTermsIndex + 1; i < lines.length; i++) {
+                let line = lines[i].replace(/\s+/g, ' ').trim();
+                if (!line) continue;
+                if (stopWords.some(stopWord => line.toLowerCase().includes(stopWord))) {
+                    break;
+                }
+                line = line.replace(/^([0-9]+[.)]|[-*])\s*/, '').replace(/['"]/g, '');
+                if (line) {
+                    structuralTermsList.push(line);
+                }
+            }
+
+            if (structuralTermsList.length === 0) {
+                return "Error: The text contained an entry terms section, but no usable items were extracted.";
+            }
+
+            return compileQuery(meshHeading, structuralTermsList, wrapCharacter);
+        }
+
         async function fetchUrlData() {
             const outputField = document.getElementById('outputQuery');
             let targetUrl = document.getElementById('urlInput').value.trim();
@@ -231,18 +278,36 @@
                 targetUrl = targetUrl.replace(ezproxy, no_ezproxy);
             }
 
-            const cleanProxyRoute = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+            const proxyRoutes = [
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+                `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+                `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`
+            ];
 
-            try {
-                const response = await fetch(cleanProxyRoute);
-                if (!response.ok) throw new Error();
-                
-                const payload = await response.json();
-                outputField.value = extractEntryTermsOnly(payload.contents, wrapCharacter);
-            } catch (err) {
-                outputField.value = `Live data load failed due to browser security proxy limitations (CORS).\n\n` +
-                                    `Bypass fix: Right click the page -> View Source, copy the HTML context and drop it directly into the Fallback field below.`;
+            for (const proxyRoute of proxyRoutes) {
+                try {
+                    const response = await fetch(proxyRoute, {
+                        headers: {
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                        }
+                    });
+
+                    if (!response.ok) {
+                        continue;
+                    }
+
+                    const payloadText = await response.text();
+                    if (payloadText && payloadText.length > 0) {
+                        outputField.value = extractEntryTermsOnly(payloadText, wrapCharacter);
+                        return;
+                    }
+                } catch (err) {
+                    continue;
+                }
             }
+
+            outputField.value = `Live data load failed because the browser cannot access the MeSH page directly from GitHub Pages.\n\n` +
+                                `Fallback: paste the page text or HTML snippet into the field below and click the extraction button.`;
         }
 
         // Content paste processing loop
