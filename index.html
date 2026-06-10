@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MeSH Entry Terms Extractor</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 750px;
+            margin: 40px auto;
+            padding: 0 20px;
+            color: #333;
+            line-height: 1.5;
+        }
+        .form-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .flex-main { flex: 4; }
+        .flex-side { flex: 1; }
+        label {
+            font-weight: bold;
+            margin-bottom: 6px;
+        }
+        input[type="text"] {
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        textarea {
+            width: 100%;
+            height: 140px;
+            font-family: monospace;
+            padding: 12px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #f0f7ff;
+            border-color: #aaccff;
+            font-size: 14px;
+            resize: vertical;
+        }
+        button {
+            background-color: #0076ff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            width: 100%;
+            margin-top: 5px;
+        }
+        button:hover { background-color: #0060d0; }
+        button.secondary {
+            background-color: #1d1d1f;
+            margin-top: 10px;
+        }
+        button.secondary:hover { background-color: #333336; }
+        .section {
+            margin-bottom: 25px;
+        }
+        .fallback-divider {
+            margin: 35px 0 20px 0;
+            border-top: 1px dashed #ccc;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>MeSH Entry Terms Extractor</h2>
+    
+    <!-- Live Extraction Panel -->
+    <div class="section">
+        <div class="form-row">
+            <div class="form-group flex-main">
+                <label for="urlInput">MeSH Page URL:</label>
+                <input type="text" id="urlInput" value="https://www.ncbi.nlm.nih.gov/mesh/68009369">
+            </div>
+            <div class="form-group flex-side">
+                <label for="wrapInput">Wrap Char:</label>
+                <input type="text" id="wrapInput" value='"' maxlength="1">
+            </div>
+        </div>
+        <button id="fetchBtn">Generate Query String</button>
+    </div>
+
+    <!-- Isolated File Output Box -->
+    <div class="section">
+        <label for="outputQuery">Output (File Contents Only):</label>
+        <textarea id="outputQuery" readonly placeholder="Your clean query string will generate here..."></textarea>
+        <button id="copyBtn" class="secondary">Copy Query String</button>
+    </div>
+
+    <div class="fallback-divider"></div>
+
+    <!-- Manual Paste Layout Box -->
+    <div class="section">
+        <label for="htmlPaste" style="color: #555;">Manual Code Snippet Fallback:</label>
+        <p style="font-size: 13px; color: #666; margin: 4px 0 8px 0;">If CORS blocks the live page fetch, paste the raw HTML blocks containing the heading and Entry Terms list here:</p>
+        <textarea id="htmlPaste" placeholder="Paste HTML source snippet here..." style="height: 100px; background-color: #fafafa; border-color: #ccc;"></textarea>
+        <button id="pasteBtn" class="secondary" style="background-color: #6e6e73; width: auto;">Extract From Pasted HTML</button>
+    </div>
+
+    <script>
+        document.getElementById('fetchBtn').addEventListener('click', fetchUrlData);
+        document.getElementById('pasteBtn').addEventListener('click', parseFromPasteInput);
+        document.getElementById('copyBtn').addEventListener('click', copyTextToClipboard);
+
+        function extractEntryTermsOnly(htmlSource, wrapCharacter) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlSource, 'text/html');
+            
+            // 1. Target the exact MeSH Title Heading, bypassing global layout headers
+            let meshHeading = "";
+            const h1Title = doc.querySelector('h1.title');
+            
+            if (h1Title) {
+                meshHeading = h1Title.textContent;
+            } else {
+                // Fallback loop checking all h1 elements for the true conceptual title block
+                const h1s = doc.querySelectorAll('h1');
+                for (const h1 of h1s) {
+                    let textCheck = h1.textContent.trim().toLowerCase();
+                    if (textCheck !== 'mesh' && textCheck !== '') {
+                        meshHeading = h1.textContent;
+                        break;
+                    }
+                }
+            }
+            
+            // Clean up formatting spaces and single quotes from the primary term heading
+            const cleanMeshHeading = meshHeading.replace(/\s+/g, ' ').replaceAll("'", "").trim();
+
+            // 2. Locate the precise target <ul> list linked to the Entry Terms layout block
+            let targetUl = null;
+            const elements = doc.getElementsByTagName('*');
+            for (let i = 0; i < elements.length; i++) {
+                const el = elements[i];
+                if (el.textContent.trim().startsWith('Entry Terms:')) {
+                    let sibling = el.nextElementSibling;
+                    while (sibling) {
+                        if (sibling.tagName === 'UL') {
+                            targetUl = sibling;
+                            break;
+                        }
+                        if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4'].includes(sibling.tagName)) {
+                            break; 
+                        }
+                        sibling = sibling.nextElementSibling;
+                    }
+                    if (targetUl) break;
+                }
+            }
+            
+            // Fallback list scan check for manual partial snippet pastes
+            if (!targetUl) {
+                const uls = doc.querySelectorAll('ul');
+                for (const ul of uls) {
+                    let prev = ul.previousElementSibling;
+                    if (prev && prev.textContent.includes('Entry Terms')) {
+                        targetUl = ul;
+                        break;
+                    }
+                }
+            }
+            
+            if (!targetUl) {
+                targetUl = doc.querySelector('ul');
+            }
+            
+            if (!targetUl) {
+                return "Error: Could not locate the structural Entry Terms <ul> element list.";
+            }
+            
+            // 3. Process the isolated Entry Terms list elements
+            const liElements = targetUl.querySelectorAll('li');
+            let structuralTermsList = [];
+            
+            liElements.forEach(li => {
+                let rawString = li.textContent;
+                let cleanString = rawString.replace(/\s+/g, ' ').trim().replaceAll("'", "");
+                if (cleanString) {
+                    structuralTermsList.push(cleanString);
+                }
+            });
+            
+            if (structuralTermsList.length === 0) {
+                return "Error: The target Entry Terms list container was found, but extracted zero valid items.";
+            }
+
+            // 4. Construct output matching your file generation criteria exactly
+            let compiledQueryString = "";
+            if (cleanMeshHeading) {
+                compiledQueryString = '"' + cleanMeshHeading + '"[Mesh]';
+                structuralTermsList.forEach(term => {
+                    compiledQueryString += ' OR ' + wrapCharacter + term + wrapCharacter;
+                });
+            } else {
+                // Handle snippet execution cleanly if heading wasn't supplied in context window
+                compiledQueryString = structuralTermsList.map(term => wrapCharacter + term + wrapCharacter).join(' OR ');
+            }
+            
+            return compiledQueryString;
+        }
+
+        // Network data pipeline setup
+        async function fetchUrlData() {
+            const outputField = document.getElementById('outputQuery');
+            let targetUrl = document.getElementById('urlInput').value.trim();
+            const wrapCharacter = document.getElementById('wrapInput').value || '"';
+
+            if (!targetUrl) {
+                alert('Please submit a valid MeSH database web link.');
+                return;
+            }
+
+            outputField.value = "Accessing remote server payload details via network proxy... Please hold.";
+
+            const ezproxy = 'https://www-ncbi-nlm-nih-gov.ezproxy.bu.edu/';
+            const no_ezproxy = 'https://www.ncbi.nlm.nih.gov/';
+            if (targetUrl.includes(ezproxy)) {
+                targetUrl = targetUrl.replace(ezproxy, no_ezproxy);
+            }
+
+            const cleanProxyRoute = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+
+            try {
+                const response = await fetch(cleanProxyRoute);
+                if (!response.ok) throw new Error();
+                
+                const payload = await response.json();
+                outputField.value = extractEntryTermsOnly(payload.contents, wrapCharacter);
+            } catch (err) {
+                outputField.value = `Live data load failed due to browser security proxy limitations (CORS).\n\n` +
+                                    `Bypass fix: Right click the page -> View Source, copy the HTML context and drop it directly into the Fallback field below.`;
+            }
+        }
+
+        // Content paste processing loop
+        function parseFromPasteInput() {
+            const pastedText = document.getElementById('htmlPaste').value.trim();
+            const wrapCharacter = document.getElementById('wrapInput').value || '"';
+            const outputField = document.getElementById('outputQuery');
+
+            if (!pastedText) {
+                alert('Please provide some manual text content strings to parse.');
+                return;
+            }
+
+            outputField.value = extractEntryTermsOnly(pastedText, wrapCharacter);
+        }
+
+        // Clipboard copying configuration block
+        function copyTextToClipboard() {
+            const outputField = document.getElementById('outputQuery');
+            if (!outputField.value || outputField.value.startsWith("Your clean") || outputField.value.startsWith("Accessing")) {
+                alert("The text target container doesn't contain any fresh output queries yet.");
+                return;
+            }
+
+            outputField.select();
+            outputField.setSelectionRange(0, 99999);
+
+            try {
+                navigator.clipboard.writeText(outputField.value);
+                alert("Query copied! Ready for PubMed execution.");
+            } catch (e) {
+                document.execCommand('copy');
+                alert("Query copied! Ready for PubMed execution.");
+            }
+        }
+    </script>
+</body>
+</html>
