@@ -72,6 +72,19 @@
             margin: 35px 0 20px 0;
             border-top: 1px dashed #ccc;
         }
+        .status-box {
+            margin-top: 12px;
+            padding: 12px 14px;
+            border: 1px solid #d9e7f7;
+            border-radius: 6px;
+            background-color: #f7fbff;
+            color: #355;
+            font-size: 14px;
+        }
+        .status-box strong {
+            display: block;
+            margin-bottom: 4px;
+        }
     </style>
 </head>
 <body>
@@ -102,18 +115,36 @@
 
     <div class="fallback-divider"></div>
 
-    <!-- Manual Paste Layout Box -->
+    <!-- Manual Entry Terms Fallback -->
     <div class="section">
-        <label for="htmlPaste" style="color: #555;">Manual Code Snippet Fallback:</label>
-        <p style="font-size: 13px; color: #666; margin: 4px 0 8px 0;">If CORS blocks the live page fetch, paste the raw HTML blocks containing the heading and Entry Terms list here:</p>
-        <textarea id="htmlPaste" placeholder="Paste HTML source snippet here..." style="height: 100px; background-color: #fafafa; border-color: #ccc;"></textarea>
-        <button id="pasteBtn" class="secondary" style="background-color: #6e6e73; width: auto;">Extract From Pasted HTML</button>
+        <label for="meshTermInput" style="color: #555;">Manual Mesh Term Fallback:</label>
+        <p style="font-size: 13px; color: #666; margin: 4px 0 8px 0;">If live fetching is blocked, enter the MeSH term and paste the Entry Terms list below.</p>
+        <input type="text" id="meshTermInput" placeholder="Enter the MeSH term here" style="margin-bottom: 10px; background-color: #fafafa; border-color: #ccc;">
+        <textarea id="entryTermsInput" placeholder="Paste the Entry Terms list here (one term per line)" style="height: 140px; background-color: #fafafa; border-color: #ccc;"></textarea>
+        <button id="pasteBtn" class="secondary" style="background-color: #6e6e73; width: auto;">Build Query From Manual Terms</button>
+    </div>
+
+    <div class="status-box" aria-live="polite">
+        <strong>Status</strong>
+        <div id="statusText">Ready to try a live fetch or use the manual fallback.</div>
+        <div id="proxySummary" style="margin-top: 6px; color: #5b6b7a;">Proxies: allorigins → corsproxy → codetabs</div>
     </div>
 
     <script>
+        const statusText = document.getElementById('statusText');
+        const proxySummary = document.getElementById('proxySummary');
+
+        function updateStatus(message, detail) {
+            statusText.textContent = message;
+            if (detail) {
+                proxySummary.textContent = detail;
+            }
+        }
+
         document.getElementById('fetchBtn').addEventListener('click', fetchUrlData);
         document.getElementById('pasteBtn').addEventListener('click', parseFromPasteInput);
         document.getElementById('copyBtn').addEventListener('click', copyTextToClipboard);
+        updateStatus('Ready to try a live fetch or use the manual fallback.', 'Proxies: allorigins → corsproxy → codetabs');
 
         function compileQuery(cleanMeshHeading, structuralTermsList, wrapCharacter) {
             if (!structuralTermsList || structuralTermsList.length === 0) {
@@ -271,6 +302,7 @@
             }
 
             outputField.value = "Accessing remote server payload details via network proxy... Please hold.";
+            updateStatus('Starting live fetch attempt.', 'Proxies: allorigins → corsproxy → codetabs');
 
             const ezproxy = 'https://www-ncbi-nlm-nih-gov.ezproxy.bu.edu/';
             const no_ezproxy = 'https://www.ncbi.nlm.nih.gov/';
@@ -279,14 +311,15 @@
             }
 
             const proxyRoutes = [
-                `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-                `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
-                `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`
+                { name: 'allorigins', url: `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}` },
+                { name: 'corsproxy', url: `https://corsproxy.io/?${encodeURIComponent(targetUrl)}` },
+                { name: 'codetabs', url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}` }
             ];
 
             for (const proxyRoute of proxyRoutes) {
+                updateStatus(`Trying ${proxyRoute.name} proxy...`, `Current proxy: ${proxyRoute.name} • Remaining: ${proxyRoutes.slice(proxyRoutes.indexOf(proxyRoute) + 1).map(item => item.name).join(', ') || 'none'}`);
                 try {
-                    const response = await fetch(proxyRoute, {
+                    const response = await fetch(proxyRoute.url, {
                         headers: {
                             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
                         }
@@ -299,6 +332,7 @@
                     const payloadText = await response.text();
                     if (payloadText && payloadText.length > 0) {
                         outputField.value = extractEntryTermsOnly(payloadText, wrapCharacter);
+                        updateStatus(`Live fetch succeeded via ${proxyRoute.name}.`, `Current proxy: ${proxyRoute.name}`);
                         return;
                     }
                 } catch (err) {
@@ -307,21 +341,44 @@
             }
 
             outputField.value = `Live data load failed because the browser cannot access the MeSH page directly from GitHub Pages.\n\n` +
-                                `Fallback: paste the page text or HTML snippet into the field below and click the extraction button.`;
+                                `Fallback: enter the MeSH term and paste the Entry Terms list into the manual section below.`;
+            updateStatus('All live proxies failed.', 'Fallback mode: manual entry terms input');
         }
 
-        // Content paste processing loop
+        // Manual fallback processing loop
         function parseFromPasteInput() {
-            const pastedText = document.getElementById('htmlPaste').value.trim();
+            const meshTerm = document.getElementById('meshTermInput').value.trim();
+            const entryTermsText = document.getElementById('entryTermsInput').value.trim();
             const wrapCharacter = document.getElementById('wrapInput').value || '"';
             const outputField = document.getElementById('outputQuery');
 
-            if (!pastedText) {
-                alert('Please provide some manual text content strings to parse.');
+            if (!meshTerm && !entryTermsText) {
+                alert('Please provide both a MeSH term and an Entry Terms list.');
                 return;
             }
 
-            outputField.value = extractEntryTermsOnly(pastedText, wrapCharacter);
+            updateStatus('Using manual fallback input.', 'Manual mode: MeSH term + entry terms list');
+
+            if (!entryTermsText) {
+                alert('Please paste the Entry Terms list into the larger box.');
+                return;
+            }
+
+            const cleanMeshHeading = meshTerm.replace(/\s+/g, ' ').replace(/['"]/g, '').trim();
+            const structuralTermsList = entryTermsText
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(Boolean)
+                .map(line => line.replace(/^([0-9]+[.)]|[-*])\s*/, '').replace(/\s+/g, ' ').replace(/['"]/g, '').trim())
+                .filter(Boolean);
+
+            if (structuralTermsList.length === 0) {
+                alert('No usable entry terms were found in the pasted list.');
+                return;
+            }
+
+            outputField.value = compileQuery(cleanMeshHeading, structuralTermsList, wrapCharacter);
+            updateStatus('Manual query built successfully.', 'Fallback completed using pasted entry terms');
         }
 
         // Clipboard copying configuration block
@@ -337,9 +394,11 @@
 
             try {
                 navigator.clipboard.writeText(outputField.value);
+                updateStatus('Query copied to clipboard.', 'Ready for PubMed execution');
                 alert("Query copied! Ready for PubMed execution.");
             } catch (e) {
                 document.execCommand('copy');
+                updateStatus('Query copied to clipboard.', 'Ready for PubMed execution');
                 alert("Query copied! Ready for PubMed execution.");
             }
         }
